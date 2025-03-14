@@ -1,0 +1,180 @@
+library(shiny)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+
+survey_data <- read.csv("graduate_survey.csv")
+
+if (file.exists("graduate_survey.csv")) {
+  relevant_columns <- c(
+    "Campus", "StudyField", "Branch", "Role", "EduLevel", "ProgLang", "Databases",
+    "Platform", "WebFramework", "Industry", "AISearch", "AITool", "Employment"
+  )
+  survey_data <- survey_data[, relevant_columns]
+  survey_data <- survey_data %>%
+    mutate(across(where(is.character), ~replace_na(., "Unknown")))
+  survey_data$Campus <- str_replace_all(survey_data$Campus, c("Umhlanga" = "Durban", "Pretoria CBD" = "Pretoria", "Bloemfontein CBD" = "Bloemfontein"))
+  survey_data$StudyField <- str_replace_all(survey_data$StudyField, c("Information Technology" = "IT", "Computer Science" = "CS", "Data Science" = "DS"))
+  survey_data$Employment <- str_replace_all(survey_data, c("Full-time employment" = "Full-time", "Part-time employment" = "Part-time"))
+  campus_counts <- survey_data %>%
+    count(Campus) %>%
+    arrange(desc(n))
+  top_campuses <- campus_counts$Campus[1:5]
+  survey_data <- survey_data %>%
+    filter(Campus %in% top_campuses)
+  tidy_comma_separated <- function(data, column_name) {
+    data %>%
+      mutate(!!sym(column_name) := str_split(!!sym(column_name), ",\\s*")) %>%
+      unnest(cols = !!sym(column_name)) %>%
+      mutate(!!sym(column_name) := str_trim(!!sym(column_name)))
+  }
+  survey_data <- tidy_comma_separated(survey_data, "ProgLang")
+  survey_data <- tidy_comma_separated(survey_data, "Databases")
+  survey_data <- tidy_comma_separated(survey_data, "WebFramework")
+  survey_data <- tidy_comma_separated(survey_data, "AISearch")
+  survey_data <- tidy_comma_separated(survey_data, "AITool")
+  survey_data <- tidy_comma_separated(survey_data, "Industry")
+  
+  #Define UI
+  ui <- fluidPage(
+    titlePanel("Eduvos IT Graduates Survey Analysis"),
+    sidebarLayout(
+      sidebarPanel(
+        selectInput("studyField", "Select Study Field:",
+                    choices = c("All", unique(survey_data$StudyField))
+        )
+      ),
+      mainPanel(
+        tabsetPanel(
+          tabPanel("Top Tools",
+                   fluidRow(
+                     splitLayout(
+                       plotOutput("progLangPlot"),
+                       plotOutput("databasesPlot")
+                     )
+                   ),
+                   fluidRow(
+                     splitLayout(
+                       plotOutput("webFrameworkPlot"),
+                       plotOutput("platformPlot")
+                     )
+                   ),
+                   fluidRow(
+                     splitLayout(
+                       plotOutput("aiSearchPlot"),
+                       plotOutput("aiToolPlot")
+                     )
+                   )
+          ),
+          tabPanel("Industries by Study Field", plotOutput("industriesPlot")),
+          tabPanel("Job Roles by Study Field", plotOutput("jobRolesPlot")),
+          tabPanel("Employment Rates", plotOutput("employmentPlot"))
+        )
+      )
+    )
+  )
+  
+  # Define server logic
+  server <- function(input, output) {
+    filtered_data <- reactive({
+      if (input$studyField == "All") {
+        return(survey_data)
+      } else {
+        return(survey_data %>% filter(StudyField == input$studyField))
+      }
+    })
+    
+    output$progLangPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "ProgLang", "Top Programming Languages")
+    })
+    
+    output$databasesPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "Databases", "Top Databases")
+    })
+    
+    output$webFrameworkPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "WebFramework", "Top Web Frameworks")
+    })
+    
+    output$platformPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "Platform", "Top Cloud Platforms")
+    })
+    
+    output$aiSearchPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "AISearch", "Top AI Search Tools")
+    })
+    
+    output$aiToolPlot <- renderPlot({
+      plot_top_tools(filtered_data(), "AITool", "Top AI Developer Tools")
+    })
+    
+    output$industriesPlot <- renderPlot({
+      industries_plot(filtered_data())
+    })
+    
+    output$jobRolesPlot <- renderPlot({
+      job_roles_plot(filtered_data())
+    })
+    
+    output$employmentPlot <- renderPlot({
+      employment_plot(filtered_data())
+    })
+  }
+
+  plot_top_tools <- function(data, column_name, title) {
+    data %>%
+      count(!!sym(column_name)) %>%
+      arrange(desc(n)) %>%
+      top_n(10, n) %>%
+      ggplot(aes(x = reorder(!!sym(column_name), n), y = n)) +
+      geom_bar(stat = "identity", fill = "skyblue") +
+      coord_flip() +
+      labs(title = title, x = column_name, y = "Count") +
+      theme_minimal()
+  }
+  
+  industries_plot <- function(data){
+    data %>%
+      group_by(StudyField, Industry) %>%
+      summarise(count = n(), .groups = 'drop') %>%
+      group_by(StudyField) %>%
+      mutate(rank = rank(desc(count), ties.method = "random")) %>%
+      filter(rank <= 5) %>%
+      ggplot(aes(x = reorder(Industry, count), y = count, fill = StudyField)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      coord_flip() +
+      facet_wrap(~StudyField, scales = "free_y") +
+      labs(title = "Top Industries by Study Field", x = "Industry", y = "Count") +
+      theme_minimal()
+  }
+  
+  job_roles_plot <- function(data){
+    data %>%
+      group_by(StudyField, Role) %>%
+      summarise(count = n(), .groups = 'drop') %>%
+      group_by(StudyField) %>%
+      mutate(rank = rank(desc(count), ties.method = "random")) %>%
+      filter(rank <= 5) %>%
+      ggplot(aes(x = reorder(Role, count), y = count, fill = StudyField)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      coord_flip() +
+      facet_wrap(~StudyField, scales = "free_y") +
+      labs(title = "Top Job Roles by Study Field", x = "Job Role", y = "Count") +
+      theme_minimal()
+  }
+  
+  employment_plot <- function(data) {
+    data %>%
+      group_by(StudyField, Employment) %>%
+      summarise(count = n(), .groups = "drop") %>%
+      group_by(StudyField) %>%
+      mutate(total = sum(count), rate = count / total) %>%
+      ggplot(aes(x = StudyField, y = rate, fill = Employment)) +
+      geom_bar(stat = "identity", position = "fill") +
+      labs(title = "Employment Rate by Study Field", x = "Study Field", y = "Employment Rate") +
+      scale_y_continuous(labels = scales::percent_format()) +
+      theme_minimal()
+  }
+  
+  #Run the application
+  shinyApp(ui = ui, server = server)
